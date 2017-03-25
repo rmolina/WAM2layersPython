@@ -8,13 +8,14 @@ Created on Sat Mar 25 10:56:37 2017
 
 import calendar
 from timeit import default_timer as timer
-import scipy.io as sio
+#import scipy.io as sio
 from getconstants import getconstants
 from Fluxes_and_States_Masterscript import (data_path, getW, getwind,
                                             getFa, getEP, getrefined,
                                             get_stablefluxes, getFa_Vert)
 import numpy as np
 
+from fluxes_and_states_code_refactoring import get_water
 
 #BEGIN OF INPUT (FILL THIS IN)
 years = np.arange(2010, 2011) #fill in the years
@@ -84,7 +85,14 @@ for yearnumber in years:
                 getW(latnrs, lonnrs, final_time, a, yearnumber, begin_time,
                      count_time, density_water, latitude, longitude, g,
                      A_gridcell, boundary,datapath)
-            
+
+            cw_new, W_top_new, W_down_new = \
+                get_water(latnrs, lonnrs, a, yearnumber, A_gridcell,
+                          boundary, input_folder)
+            assert np.allclose(cw_new, cw)
+            assert np.allclose(W_top_new, W_top)
+            assert np.allclose(W_down_new, W_down)
+
             #2 wind in between pressure levels
             U, V = getwind(latnrs, lonnrs, final_time, a, yearnumber,
                            begin_time, count_time, datapath)
@@ -118,8 +126,8 @@ for yearnumber in years:
                                               divt, count_time, latitude,
                                               longitude, isglobal)
             
-            sio.savemat(datapath[23], {'Fa_E_top':Fa_E_top, 'Fa_N_top':Fa_N_top, 'Fa_E_down':Fa_E_down,'Fa_N_down':Fa_N_down, 'Fa_Vert':Fa_Vert, 'E':E, 'P':P, 
-                                                                                    'W_top':W_top, 'W_down':W_down}, do_compression=True)
+#            sio.savemat(datapath[23], {'Fa_E_top':Fa_E_top, 'Fa_N_top':Fa_N_top, 'Fa_E_down':Fa_E_down,'Fa_N_down':Fa_N_down, 'Fa_Vert':Fa_Vert, 'E':E, 'P':P, 
+#                                                                                    'W_top':W_top, 'W_down':W_down}, do_compression=True)
             
             # alternative, but slower and more spacious
             # np.savez_compressed(datapath[23],Fa_E_top,Fa_N_top,Fa_E_down,Fa_N_down,Fa_Vert,E,P,W_top,W_down)
