@@ -18,7 +18,7 @@ import numpy as np
 
 from fluxes_and_states_code_refactoring import (get_water,
                                                 get_horizontal_fluxes,
-                                                correct_horizontal_fluxes,
+                                                get_two_layer_fluxes,
                                                 get_evaporation_precipitation,
                                                 refine_fluxes,
                                                 refine_evap_precip,
@@ -114,12 +114,19 @@ for yearnumber in years:
             (ewf, nwf, eastward_tcw, northward_tcw) = \
                  get_horizontal_fluxes(cw, day, latnrs, lonnrs,
                                        input_folder)
-            east_top, north_top, east_bottom, north_bottom = \
-                correct_horizontal_fluxes(ewf, nwf, eastward_tcw,
-                                          northward_tcw, boundary)
+
+#            east_top, north_top, east_bottom, north_bottom = \
+#                correct_horizontal_fluxes(ewf, nwf, eastward_tcw,
+#                                          northward_tcw, boundary)
+
+            east_top, east_bottom = \
+                get_two_layer_fluxes(ewf, eastward_tcw, boundary)
             assert np.allclose(east_top, Fa_E_top)
-            assert np.allclose(north_top, Fa_N_top)
             assert np.allclose(east_bottom, Fa_E_down)
+
+            north_top, north_bottom = \
+                get_two_layer_fluxes(nwf, northward_tcw, boundary)
+            assert np.allclose(north_top, Fa_N_top)
             assert np.allclose(north_bottom, Fa_N_down)
 
             #4 evaporation and precipitation

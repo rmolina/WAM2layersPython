@@ -6,11 +6,12 @@ Created on Sat Mar 25 11:56:58 2017
 @author: rmolina
 """
 
-
 import datetime
+
 import netCDF4
 import numpy as np
 from scipy.constants import g
+
 
 WATER_DENSITY = 1000.  # kg/m3
 
@@ -164,43 +165,28 @@ def get_horizontal_fluxes(total_column_water, current_date, latnrs, lonnrs, inpu
             northward_tcw_flux)
 
 
-def correct_horizontal_fluxes(eastward_water_flux, northward_water_flux,
-                              eastward_tcw_flux, northward_tcw_flux, boundary):
-    """ calculates corrected fluxes for the two layers """
-    # uncorrected down and top fluxes
-    uncorrected_eastward_bottom = np.sum(eastward_tcw_flux[:, boundary:], axis=1)  # kg*m-1*s-1
-    uncorrected_northward_bottom = np.sum(northward_tcw_flux[:, boundary:], axis=1)  # kg*m-1*s-1
+def get_two_layer_fluxes(water_flux, tcw_flux, boundary):
+    """ split the flux into two layers """
+    # TIP: All units: [kg*m-1*s-1]
 
-    uncorrected_eastward_top = np.sum(eastward_tcw_flux[:, :boundary], axis=1)  # kg*m-1*s-1
-    uncorrected_northward_top = np.sum(northward_tcw_flux[:, :boundary], axis=1)  # kg*m-1*s-1
+    # uncorrected bottom and top fluxes
+    bottom_layer_flux = np.sum(tcw_flux[:, boundary:], axis=1)
+    top_layer_flux = np.sum(tcw_flux[:, :boundary], axis=1)
+
+    # corrected total fluxes
+    corrected_total = water_flux / (bottom_layer_flux + top_layer_flux)
+    corrected_total[corrected_total < 0] = 0
+    corrected_total[corrected_total > 2] = 2
 
     # correct top and bottom fluxes
-    corrected_eastward = (eastward_water_flux /
-                          (uncorrected_eastward_bottom + uncorrected_eastward_top))
-    corrected_eastward[corrected_eastward < 0] = 0
-    corrected_eastward[corrected_eastward > 2] = 2
-    corrected_northward = (northward_water_flux /
-                           (uncorrected_northward_bottom + uncorrected_northward_top))
-    corrected_northward[corrected_northward < 0] = 0
-    corrected_northward[corrected_northward > 2] = 2
-    # [kg*m-1*s-1]
-    corrected_eastward_bottom = corrected_eastward * uncorrected_eastward_bottom
-    corrected_northward_bottom = corrected_northward * uncorrected_northward_bottom
-    corrected_eastward_top = corrected_eastward * uncorrected_eastward_top
-    corrected_northward_top = corrected_northward * uncorrected_northward_top
+    bottom_layer_flux = corrected_total * bottom_layer_flux
+    top_layer_flux = corrected_total * top_layer_flux
 
-    # calculate the fluxes during the timestep
-    corrected_eastward_bottom = 0.5 * (corrected_eastward_bottom[:-1] +
-                                       corrected_eastward_bottom[1:])
-    corrected_northward_bottom = 0.5 * (corrected_northward_bottom[:-1] +
-                                        corrected_northward_bottom[1:])
-    corrected_eastward_top = 0.5 * (corrected_eastward_top[:-1] +
-                                    corrected_eastward_top[1:])
-    corrected_northward_top = 0.5 * (corrected_northward_top[:-1] +
-                                     corrected_northward_top[1:])
+    # fluxes during the timestep
+    bottom_layer_flux = 0.5 * (bottom_layer_flux[:-1] + bottom_layer_flux[1:])
+    top_layer_flux = 0.5 * (top_layer_flux[:-1] + top_layer_flux[1:])
 
-    return (corrected_eastward_top, corrected_northward_top,
-            corrected_eastward_bottom, corrected_northward_bottom)
+    return top_layer_flux, bottom_layer_flux
 
 
 def get_evaporation_precipitation(current_date, latnrs, lonnrs, gridcell_area,
@@ -263,7 +249,7 @@ def refine_fluxes(eastward_top, northward_top, eastward_bottom,
 
 
 def refine_evap_precip(evaporation, precipitation, divt):
-    """ refine evaporation and precipiation  into a smaller timestep """
+    """ refine evaporation and precipitation  into a smaller timestep """
     # TIP: E and P values are evenly distributed in 'divt2' parts
     divt2 = divt/2  # TIP: E and P data is available every 3h (not every 6h)
     evaporation = np.repeat(evaporation, repeats=divt2, axis=0) / divt2
