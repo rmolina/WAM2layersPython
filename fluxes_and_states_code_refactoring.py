@@ -65,8 +65,7 @@ def read_netcdf(var, year, day, latnrs, lonnrs, input_folder):
     return data
 
 
-def get_atmospheric_pressure(year, day, levels, latnrs, lonnrs,
-                                   input_folder):
+def get_atmospheric_pressure(year, day, levels, latnrs, lonnrs, input_folder):
     """ calculates atmospheric pressure [Pa] at model levels """
     # Source for A and B vertical discretisation values:
     # http://www.ecmwf.int/en/forecasts/documentation-and-support/60-model-levels
@@ -137,3 +136,68 @@ def get_water(latnrs, lonnrs, day, year, gridcell_area, boundary,
                           gridcell_area / WATER_DENSITY)
 
     return calculated_total_column_water, water_top_layer, water_bottom_layer
+
+
+def get_horizontal_fluxes(total_column_water, year, day, latnrs, lonnrs, input_folder):
+    """ calculates horizontal water fluxes """
+
+    # Vertical integral of water vapour flux
+    viwve = read_netcdf('viwve', year, day, latnrs, lonnrs, input_folder)  # eastward
+    viwvn = read_netcdf('viwvn', year, day, latnrs, lonnrs, input_folder)  # northward
+    # Vertical integral of cloud liquid water flux
+    vilwe = read_netcdf('vilwe', year, day, latnrs, lonnrs, input_folder)  # eastward
+    vilwn = read_netcdf('vilwn', year, day, latnrs, lonnrs, input_folder)  # northward
+    # Vertical integral of cloud frozen water flux
+    viiwe = read_netcdf('viiwe', year, day, latnrs, lonnrs, input_folder)  # eastward
+    viiwn = read_netcdf('viiwn', year, day, latnrs, lonnrs, input_folder)  # northward
+
+    # sum water states
+    eastward_water_flux = viwve + vilwe + viiwe  # kg*m-1*s-1
+    northward_water_flux = viwvn + vilwn + viiwn  # kg*m-1*s-1
+
+    # eastward and northward fluxes
+    u_wind_component = read_netcdf('u', year, day, latnrs, lonnrs, input_folder)
+    v_wind_component = read_netcdf('v', year, day, latnrs, lonnrs, input_folder)
+    eastward_tcw_flux = u_wind_component * total_column_water
+    northward_tcw_flux = v_wind_component * total_column_water
+    return (eastward_water_flux, northward_water_flux, eastward_tcw_flux,
+            northward_tcw_flux)
+
+
+def correct_horizontal_fluxes(eastward_water_flux, northward_water_flux,
+                              eastward_tcw_flux, northward_tcw_flux, boundary):
+    """ calculates corrected fluxes for the two layers """
+    # uncorrected down and top fluxes
+    uncorrected_eastward_bottom = np.sum(eastward_tcw_flux[:, boundary:], axis=1)  # kg*m-1*s-1
+    uncorrected_northward_bottom = np.sum(northward_tcw_flux[:, boundary:], axis=1)  # kg*m-1*s-1
+
+    uncorrected_eastward_top = np.sum(eastward_tcw_flux[:, :boundary], axis=1)  # kg*m-1*s-1
+    uncorrected_northward_top = np.sum(northward_tcw_flux[:, :boundary], axis=1)  # kg*m-1*s-1
+
+    # correct top and bottom fluxes
+    corrected_eastward = (eastward_water_flux /
+                          (uncorrected_eastward_bottom + uncorrected_eastward_top))
+    corrected_eastward[corrected_eastward < 0] = 0
+    corrected_eastward[corrected_eastward > 2] = 2
+    corrected_northward = (northward_water_flux /
+                           (uncorrected_northward_bottom + uncorrected_northward_top))
+    corrected_northward[corrected_northward < 0] = 0
+    corrected_northward[corrected_northward > 2] = 2
+    # [kg*m-1*s-1]
+    corrected_eastward_bottom = corrected_eastward * uncorrected_eastward_bottom
+    corrected_northward_bottom = corrected_northward * uncorrected_northward_bottom
+    corrected_eastward_top = corrected_eastward * uncorrected_eastward_top
+    corrected_northward_top = corrected_northward * uncorrected_northward_top
+
+    # calculate the fluxes during the timestep
+    corrected_eastward_bottom = 0.5 * (corrected_eastward_bottom[:-1] +
+                                       corrected_eastward_bottom[1:])
+    corrected_northward_bottom = 0.5 * (corrected_northward_bottom[:-1] +
+                                        corrected_northward_bottom[1:])
+    corrected_eastward_top = 0.5 * (corrected_eastward_top[:-1] +
+                                    corrected_eastward_top[1:])
+    corrected_northward_top = 0.5 * (corrected_northward_top[:-1] +
+                                     corrected_northward_top[1:])
+
+    return (corrected_eastward_top, corrected_northward_top,
+            corrected_eastward_bottom, corrected_northward_bottom)
