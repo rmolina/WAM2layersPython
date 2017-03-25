@@ -248,3 +248,47 @@ def get_evaporation_precipitation(current_date, latnrs, lonnrs, gridcell_area,
     precipitation_volume = precipitation * gridcell_area
 
     return evaporation_volume, precipitation_volume
+
+
+def refine_fluxes(eastward_top, northward_top, eastward_bottom,
+                  northward_bottom, divt):
+    """ refine horizontal fluxes into a smaller timestep """
+    # TIP: fluxes are just repeated 'divt' times
+    eastward_bottom = np.repeat(eastward_bottom, repeats=divt, axis=0)
+    northward_bottom = np.repeat(northward_bottom, repeats=divt, axis=0)
+    eastward_top = np.repeat(eastward_top, repeats=divt, axis=0)
+    northward_top = np.repeat(northward_top, repeats=divt, axis=0)
+
+    return eastward_top, northward_top, eastward_bottom, northward_bottom
+
+
+def refine_evap_precip(evaporation, precipitation, divt):
+    """ refine evaporation and precipiation  into a smaller timestep """
+    # TIP: E and P values are evenly distributed in 'divt2' parts
+    divt2 = divt/2  # TIP: E and P data is available every 3h (not every 6h)
+    evaporation = np.repeat(evaporation, repeats=divt2, axis=0) / divt2
+    precipitation = np.repeat(precipitation, repeats=divt2, axis=0) / divt2
+
+    return evaporation, precipitation
+
+
+def refine_water(water, divt):
+    """ refine water volumes into a smaller timestep """
+    # TIP: water volumes are accumulated: the difference between two observed
+    # volumes (which are 6 hours apart) is evenly distributed in 'divt' parts,
+    # and a part is added at each step except the first one (at the first step
+    # we are in an observed volume, there is no need to add anything)
+
+    # TIP: partvector stores how many parts must be added at each step
+    # FIXME: this assumes 4 observations are available each day
+    partvector = np.tile(np.arange(divt), 4)
+
+    water_refined = (np.repeat(water[:-1], repeats=divt, axis=0) +
+                     partvector[:, np.newaxis, np.newaxis] *
+                     np.repeat(np.diff(water, axis=0) / divt,
+                               repeats=divt, axis=0))
+
+    water_refined = np.concatenate((water_refined,
+                                    water[-1][np.newaxis]))
+
+    return water_refined

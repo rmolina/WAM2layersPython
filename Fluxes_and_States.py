@@ -19,7 +19,10 @@ import numpy as np
 from fluxes_and_states_code_refactoring import (get_water,
                                                 get_horizontal_fluxes,
                                                 correct_horizontal_fluxes,
-                                                get_evaporation_precipitation)
+                                                get_evaporation_precipitation,
+                                                refine_fluxes,
+                                                refine_evap_precip,
+                                                refine_water)
 
 #BEGIN OF INPUT (FILL THIS IN)
 years = np.arange(2010, 2011) #fill in the years
@@ -130,21 +133,40 @@ for yearnumber in years:
             assert np.allclose(precipitation, P)
             
             #5 put data on a smaller time step
-            Fa_E_top_1, Fa_N_top_1, Fa_E_down_1, Fa_N_down_1, E, P, W_top, \
-                W_down = getrefined(Fa_E_top, Fa_N_top, Fa_E_down, Fa_N_down,
-                                    W_top, W_down, E, P, divt, count_time,
-                                    latitude, longitude)
+            Fa_E_top_1, Fa_N_top_1, Fa_E_down_1, Fa_N_down_1, \
+                E_1, P_1, W_top_1, W_down_1 = \
+                    getrefined(Fa_E_top, Fa_N_top, Fa_E_down, Fa_N_down,
+                               W_top, W_down, E, P, divt, count_time,
+                               latitude, longitude)
+
+            east_top, north_top, east_bottom, north_bottom = \
+                refine_fluxes(Fa_E_top, Fa_N_top, Fa_E_down, Fa_N_down, divt)
+            assert np.allclose(east_top, Fa_E_top_1)
+            assert np.allclose(north_top, Fa_N_top_1)
+            assert np.allclose(east_bottom, Fa_E_down_1)
+            assert np.allclose(north_bottom, Fa_N_down_1)
+
+            evaporation, precipitation, = refine_evap_precip(E, P, divt)
+            assert np.allclose(evaporation, E_1)
+            assert np.allclose(precipitation, P_1)
+
+            W_top_small = refine_water(W_top, divt)
+            assert np.allclose(W_top_small, W_top_1)
+
+            W_down_small = refine_water(W_down, divt)
+            assert np.allclose(W_down_small, W_down_1)
+
 
             #6 stabilize horizontal fluxes and get everything in (m3 per smaller timestep)
             Fa_E_top, Fa_E_down, Fa_N_top, Fa_N_down = \
-                get_stablefluxes(W_top, W_down, Fa_E_top_1, Fa_E_down_1,
+                get_stablefluxes(W_top_1, W_down_1, Fa_E_top_1, Fa_E_down_1,
                                  Fa_N_top_1, Fa_N_down_1, timestep, divt,
                                  L_EW_gridcell,density_water, L_N_gridcell,
                                  L_S_gridcell, latitude, longitude, count_time)
             
             #7 determine the vertical moisture flux
             Fa_Vert_raw, Fa_Vert = getFa_Vert(Fa_E_top, Fa_E_down, Fa_N_top,
-                                              Fa_N_down, E,P,W_top, W_down,
+                                              Fa_N_down, E_1, P_1,W_top_1, W_down_1,
                                               divt, count_time, latitude,
                                               longitude, isglobal)
             
