@@ -8,7 +8,6 @@ Created on Sat Mar 25 11:56:58 2017
 
 
 import datetime
-
 import netCDF4
 import numpy as np
 from scipy.constants import g
@@ -16,7 +15,7 @@ from scipy.constants import g
 WATER_DENSITY = 1000.  # kg/m3
 
 
-def read_netcdf(var, year, day, latnrs, lonnrs, input_folder):
+def read_netcdf(var, current_date, latnrs, lonnrs, input_folder):
     """ reads ERA Interim data from a netCDF file """
 
     # TIP: some variables are stored in the netCDF file using common
@@ -42,7 +41,7 @@ def read_netcdf(var, year, day, latnrs, lonnrs, input_folder):
     # define start and end times for the time-slice of the array
     # TIP: we use a timedelta of 25 hours to catch the 00 hours of the
     # next day (when available)
-    start = datetime.datetime(year, 1, 1) + datetime.timedelta(days=day)
+    start = current_date
     end = start + datetime.timedelta(hours=25)
 
     # TIP; for evaporation and precipitation, the first register of each day
@@ -65,7 +64,7 @@ def read_netcdf(var, year, day, latnrs, lonnrs, input_folder):
     return data
 
 
-def get_atmospheric_pressure(year, day, levels, latnrs, lonnrs, input_folder):
+def get_atmospheric_pressure(current_date, levels, latnrs, lonnrs, input_folder):
     """ calculates atmospheric pressure [Pa] at model levels """
     # Source for A and B vertical discretisation values:
     # http://www.ecmwf.int/en/forecasts/documentation-and-support/60-model-levels
@@ -92,15 +91,15 @@ def get_atmospheric_pressure(year, day, levels, latnrs, lonnrs, input_folder):
          0.879657, 0.907884, 0.93194, 0.951822, 0.967645, 0.979663, 0.98827,
          0.994019, 0.99763, 1])
 
-    surface_pressure = read_netcdf('sp', year, day, latnrs, lonnrs,
+    surface_pressure = read_netcdf('sp', current_date, latnrs, lonnrs,
                                    input_folder)
 
     return (vertical_discretisation_a[np.newaxis, levels, np.newaxis, np.newaxis] +
             vertical_discretisation_b[np.newaxis, levels, np.newaxis, np.newaxis] *
-            surface_pressure[:, np.newaxis, :, :])
+            surface_pressure[:, np.newaxis])
 
 
-def get_water(latnrs, lonnrs, day, year, gridcell_area, boundary,
+def get_water(current_date, latnrs, lonnrs, gridcell_area, boundary,
               input_folder):
     """ calculate water volumes for the two layers """
 
@@ -108,9 +107,9 @@ def get_water(latnrs, lonnrs, day, year, gridcell_area, boundary,
                   58, 59, 60])
 
     atmospheric_pressure = \
-        get_atmospheric_pressure(year, day, k, latnrs, lonnrs, input_folder)
+        get_atmospheric_pressure(current_date, k, latnrs, lonnrs, input_folder)
 
-    specific_humidity = read_netcdf('q', year, day, latnrs, lonnrs,
+    specific_humidity = read_netcdf('q', current_date, latnrs, lonnrs,
                                     input_folder)
 
     cwv = specific_humidity * np.diff(atmospheric_pressure, axis=1) / g  # [kg/m2]
@@ -119,14 +118,14 @@ def get_water(latnrs, lonnrs, day, year, gridcell_area, boundary,
     total_column_water_vapor = np.sum(cwv, axis=1)
 
     # Total column water
-    total_column_water = read_netcdf('tcw', year, day, latnrs, lonnrs,
+    total_column_water = read_netcdf('tcw', current_date, latnrs, lonnrs,
                                      input_folder)
     calculated_total_column_water = \
-        (total_column_water / total_column_water_vapor)[:, np.newaxis, :, :] * cwv
+        (total_column_water / total_column_water_vapor)[:, np.newaxis] * cwv
 
     # water volumes
-    vapor_top = np.sum(cwv[:, :boundary, :, :], axis=1)
-    vapor_down = np.sum(cwv[:, boundary:, :, :], axis=1)
+    vapor_top = np.sum(cwv[:, :boundary], axis=1)
+    vapor_down = np.sum(cwv[:, boundary:], axis=1)
     vapor = vapor_top + vapor_down
 
     water_top_layer = (total_column_water * (vapor_top / vapor) *
@@ -138,28 +137,29 @@ def get_water(latnrs, lonnrs, day, year, gridcell_area, boundary,
     return calculated_total_column_water, water_top_layer, water_bottom_layer
 
 
-def get_horizontal_fluxes(total_column_water, year, day, latnrs, lonnrs, input_folder):
+def get_horizontal_fluxes(total_column_water, current_date, latnrs, lonnrs, input_folder):
     """ calculates horizontal water fluxes """
 
     # Vertical integral of water vapour flux
-    viwve = read_netcdf('viwve', year, day, latnrs, lonnrs, input_folder)  # eastward
-    viwvn = read_netcdf('viwvn', year, day, latnrs, lonnrs, input_folder)  # northward
+    viwve = read_netcdf('viwve', current_date, latnrs, lonnrs, input_folder)  # eastward
+    viwvn = read_netcdf('viwvn', current_date, latnrs, lonnrs, input_folder)  # northward
     # Vertical integral of cloud liquid water flux
-    vilwe = read_netcdf('vilwe', year, day, latnrs, lonnrs, input_folder)  # eastward
-    vilwn = read_netcdf('vilwn', year, day, latnrs, lonnrs, input_folder)  # northward
+    vilwe = read_netcdf('vilwe', current_date, latnrs, lonnrs, input_folder)  # eastward
+    vilwn = read_netcdf('vilwn', current_date, latnrs, lonnrs, input_folder)  # northward
     # Vertical integral of cloud frozen water flux
-    viiwe = read_netcdf('viiwe', year, day, latnrs, lonnrs, input_folder)  # eastward
-    viiwn = read_netcdf('viiwn', year, day, latnrs, lonnrs, input_folder)  # northward
+    viiwe = read_netcdf('viiwe', current_date, latnrs, lonnrs, input_folder)  # eastward
+    viiwn = read_netcdf('viiwn', current_date, latnrs, lonnrs, input_folder)  # northward
 
     # sum water states
     eastward_water_flux = viwve + vilwe + viiwe  # kg*m-1*s-1
     northward_water_flux = viwvn + vilwn + viiwn  # kg*m-1*s-1
 
     # eastward and northward fluxes
-    u_wind_component = read_netcdf('u', year, day, latnrs, lonnrs, input_folder)
-    v_wind_component = read_netcdf('v', year, day, latnrs, lonnrs, input_folder)
+    u_wind_component = read_netcdf('u', current_date, latnrs, lonnrs, input_folder)
+    v_wind_component = read_netcdf('v', current_date, latnrs, lonnrs, input_folder)
     eastward_tcw_flux = u_wind_component * total_column_water
     northward_tcw_flux = v_wind_component * total_column_water
+
     return (eastward_water_flux, northward_water_flux, eastward_tcw_flux,
             northward_tcw_flux)
 
@@ -201,3 +201,50 @@ def correct_horizontal_fluxes(eastward_water_flux, northward_water_flux,
 
     return (corrected_eastward_top, corrected_northward_top,
             corrected_eastward_bottom, corrected_northward_bottom)
+
+
+def get_evaporation_precipitation(current_date, latnrs, lonnrs, gridcell_area,
+                                  input_folder):
+    """ get evaporation and precipitation data from ERA Interim netCDF files,
+    disaggregate the data into 3h accumulated values and transfer invalid
+    (by sign convention) evaporation into precipitation """
+
+    evaporation = read_netcdf('e', current_date, latnrs, lonnrs, input_folder)
+    precipitation = read_netcdf('tp', current_date, latnrs, lonnrs, input_folder)
+
+    # TIP: ERA Interim's evaporation and precipitation are stored as values
+    # accumulated in the ranges: 0h-3h, 0h-6h, 0h-9h, 0h-12h, and 12h-15h,
+    # 12h-18h, 12h-21h, 12h-24h
+
+    # calculate differences in time in order to obtain 3h acccumulations
+    e_diff = np.diff(evaporation, axis=0)
+    p_diff = np.diff(precipitation, axis=0)
+
+    # TIP: indices 0 and 4 in evaporation an precipitation are already
+    # expressed as 3-hour accumulation (0h-3h and 12h-15h) and therefore they
+    # won't be replaced
+
+    # disaggregate evaporation
+    evaporation[1:4] = e_diff[0:3]  # [1:4] <==> 06h, 09h, 12h
+    evaporation[5:8] = e_diff[4:7]  # [5:8] <==> 18h, 21h, 24h
+
+    # disaggregate total precipitation into 3h accumulated values
+    precipitation[1:4] = p_diff[0:3]  # [1:4] <==> 03h, 06h, 09h
+    precipitation[5:8] = p_diff[4:7]  # [5:8] <==> 15h, 18h, 21h
+
+    # TIP: ERA Interim's vertical fluxes are positive downwards. Therefore,
+    # precipitation should be positive, and evaporation should be negative.
+
+    # positive values of evaporation are transferred to precipitation and
+    # negative values in the resulting precipitation are discarded
+    precipitation = np.maximum(precipitation + np.maximum(evaporation, 0), 0)
+
+    # positive evaporation (already transferred) is discarded, and the sign is
+    # reversed to use positive evaporation
+    evaporation = -np.minimum(evaporation, 0)
+
+    # calculate volumes
+    evaporation_volume = evaporation * gridcell_area
+    precipitation_volume = precipitation * gridcell_area
+
+    return evaporation_volume, precipitation_volume

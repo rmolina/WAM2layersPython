@@ -6,6 +6,7 @@ Created on Sat Mar 25 10:56:37 2017
 @author: rmolina
 """
 
+import datetime
 import calendar
 from timeit import default_timer as timer
 #import scipy.io as sio
@@ -17,7 +18,8 @@ import numpy as np
 
 from fluxes_and_states_code_refactoring import (get_water,
                                                 get_horizontal_fluxes,
-                                                correct_horizontal_fluxes)
+                                                correct_horizontal_fluxes,
+                                                get_evaporation_precipitation)
 
 #BEGIN OF INPUT (FILL THIS IN)
 years = np.arange(2010, 2011) #fill in the years
@@ -88,9 +90,10 @@ for yearnumber in years:
                      count_time, density_water, latitude, longitude, g,
                      A_gridcell, boundary,datapath)
 
+            day = datetime.datetime(yearnumber, 1, 1) + datetime.timedelta(days=a)
+
             cw_new, W_top_new, W_down_new = \
-                get_water(latnrs, lonnrs, a, yearnumber, A_gridcell,
-                          boundary, input_folder)
+                get_water(day, latnrs, lonnrs, A_gridcell, boundary, input_folder)
             assert np.allclose(cw_new, cw)
             assert np.allclose(W_top_new, W_top)
             assert np.allclose(W_down_new, W_down)
@@ -106,7 +109,7 @@ for yearnumber in years:
                       latitude, longitude)
 
             (ewf, nwf, eastward_tcw, northward_tcw) = \
-                 get_horizontal_fluxes(cw, yearnumber, a, latnrs, lonnrs,
+                 get_horizontal_fluxes(cw, day, latnrs, lonnrs,
                                        input_folder)
             east_top, north_top, east_bottom, north_bottom = \
                 correct_horizontal_fluxes(ewf, nwf, eastward_tcw,
@@ -119,6 +122,12 @@ for yearnumber in years:
             #4 evaporation and precipitation
             E, P = getEP(latnrs, lonnrs, yearnumber, begin_time, count_time,
                          latitude, longitude, A_gridcell, datapath)
+
+            evaporation, precipitation = \
+                get_evaporation_precipitation(day, latnrs, lonnrs,
+                                              A_gridcell, input_folder)
+            assert np.allclose(evaporation, E)
+            assert np.allclose(precipitation, P)
             
             #5 put data on a smaller time step
             Fa_E_top_1, Fa_N_top_1, Fa_E_down_1, Fa_N_down_1, E, P, W_top, \
