@@ -178,7 +178,7 @@ def get_two_layer_fluxes(water_flux, tcw_flux, boundary):
     corrected_total[corrected_total < 0] = 0
     corrected_total[corrected_total > 2] = 2
 
-    # correct top and bottom fluxes
+    # corrected bottom and top fluxes
     bottom_layer_flux = corrected_total * bottom_layer_flux
     top_layer_flux = corrected_total * top_layer_flux
 
@@ -278,3 +278,54 @@ def refine_water(water, divt):
                                     water[-1][np.newaxis]))
 
     return water_refined
+
+
+def stable_layer_fluxes(water, eastern_flux, northern_flux, refined_timestep,
+                        gridcell_geometry):
+
+    """ get stable eastern and northen fluxes for one layer """
+    area, side_length, top_length, bottom_length = gridcell_geometry
+
+    # convert to m3
+    # TIP: [(kg*m^-1*s^-1) * s * m * (kg^-1*m^3)] = [m3]
+    eastern = (eastern_flux * refined_timestep * side_length / WATER_DENSITY)
+
+    northern = (northern_flux * refined_timestep *
+                0.5 * (top_length + bottom_length)[np.newaxis, :, np.newaxis] /
+                WATER_DENSITY)
+
+    # find out where the negative fluxes are
+    eastern_posneg = np.ones_like(eastern)
+    eastern_posneg[eastern < 0] = -1
+
+    northern_posneg = np.ones_like(eastern)
+    northern_posneg[northern < 0] = -1
+
+    # make everything absolute
+    eastern_abs = np.abs(eastern)
+    northern_abs = np.abs(northern)
+
+    # stabilize the outfluxes / influxes
+    stab = 1./2. # during the reduced timestep the water cannot move further
+    # than 1/x * the gridcell, in other words at least x * the reduced
+    # timestep is needed to cross a gridcell
+
+    # suppress 'invalid value encountered' warnings.
+    # nan values are handled later with np.nan_to_num()
+    with np.errstate(invalid='ignore'):
+        eastern_stable = np.minimum(eastern_abs, water[:-1] * stab *
+                                    (eastern_abs / (eastern_abs +
+                                                    northern_abs)))
+        northern_stable = np.minimum(northern_abs, water[:-1] * stab *
+                                     (northern_abs / (eastern_abs +
+                                                      northern_abs)))
+
+    #get rid of the nan values
+    eastern_stable = np.nan_to_num(eastern_stable)
+    northern_stable = np.nan_to_num(northern_stable)
+
+    #redefine
+    eastern = eastern_stable * eastern_posneg
+    northern = northern_stable * northern_posneg
+
+    return eastern, northern

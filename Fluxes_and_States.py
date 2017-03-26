@@ -22,7 +22,8 @@ from fluxes_and_states_code_refactoring import (get_water,
                                                 get_evaporation_precipitation,
                                                 refine_fluxes,
                                                 refine_evap_precip,
-                                                refine_water)
+                                                refine_water,
+                                                stable_layer_fluxes)
 
 #BEGIN OF INPUT (FILL THIS IN)
 years = np.arange(2010, 2011) #fill in the years
@@ -69,6 +70,9 @@ start1 = timer()
 latitude, longitude, lsm, g, density_water, timestep, A_gridcell, \
     L_N_gridcell, L_S_gridcell, L_EW_gridcell, gridcell = \
     getconstants(latnrs, lonnrs, lake_mask, invariant_data)
+
+# FIXME: we only need getconstants() for this values.
+gridcell_geometry = (A_gridcell, L_EW_gridcell, L_N_gridcell, L_S_gridcell)
 
 # loop through the years
 for yearnumber in years:
@@ -170,6 +174,20 @@ for yearnumber in years:
                                  Fa_N_top_1, Fa_N_down_1, timestep, divt,
                                  L_EW_gridcell,density_water, L_N_gridcell,
                                  L_S_gridcell, latitude, longitude, count_time)
+
+
+            refined_timestep = timestep / divt
+            east_top, north_top = \
+                stable_layer_fluxes(W_top_1, Fa_E_top_1, Fa_N_top_1,
+                                    refined_timestep, gridcell_geometry)
+            assert np.allclose(east_top, Fa_E_top)
+            assert np.allclose(north_top, Fa_N_top)
+
+            east_bottom, north_bottom = \
+                stable_layer_fluxes(W_down_1, Fa_E_down_1, Fa_N_down_1,
+                                    refined_timestep, gridcell_geometry)
+            assert np.allclose(east_bottom, Fa_E_down)
+            assert np.allclose(north_bottom, Fa_N_down)
             
             #7 determine the vertical moisture flux
             Fa_Vert_raw, Fa_Vert = getFa_Vert(Fa_E_top, Fa_E_down, Fa_N_top,
