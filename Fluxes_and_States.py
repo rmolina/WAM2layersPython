@@ -23,7 +23,9 @@ from fluxes_and_states_code_refactoring import (get_water,
                                                 refine_fluxes,
                                                 refine_evap_precip,
                                                 refine_water,
-                                                stable_layer_fluxes)
+                                                stable_layer_fluxes,
+                                                balance_horizontal_fluxes,
+                                                get_vertical_fluxes_new)
 
 #BEGIN OF INPUT (FILL THIS IN)
 years = np.arange(2010, 2011) #fill in the years
@@ -100,7 +102,7 @@ for yearnumber in years:
             day = datetime.datetime(yearnumber, 1, 1) + datetime.timedelta(days=a)
 
             cw_new, W_top_new, W_down_new = \
-                get_water(day, latnrs, lonnrs, A_gridcell, boundary, input_folder)
+                get_water(day, latnrs, lonnrs, A_gridcell, boundary)
             assert np.allclose(cw_new, cw)
             assert np.allclose(W_top_new, W_top)
             assert np.allclose(W_down_new, W_down)
@@ -116,8 +118,7 @@ for yearnumber in years:
                       latitude, longitude)
 
             (ewf, nwf, eastward_tcw, northward_tcw) = \
-                 get_horizontal_fluxes(cw, day, latnrs, lonnrs,
-                                       input_folder)
+                 get_horizontal_fluxes(cw, day, latnrs, lonnrs)
 
 #            east_top, north_top, east_bottom, north_bottom = \
 #                correct_horizontal_fluxes(ewf, nwf, eastward_tcw,
@@ -138,8 +139,7 @@ for yearnumber in years:
                          latitude, longitude, A_gridcell, datapath)
 
             evaporation, precipitation = \
-                get_evaporation_precipitation(day, latnrs, lonnrs,
-                                              A_gridcell, input_folder)
+                get_evaporation_precipitation(day, latnrs, lonnrs, A_gridcell)
             assert np.allclose(evaporation, E)
             assert np.allclose(precipitation, P)
             
@@ -194,7 +194,15 @@ for yearnumber in years:
                                               Fa_N_down, E_1, P_1,W_top_1, W_down_1,
                                               divt, count_time, latitude,
                                               longitude, isglobal)
-            
+
+            Sa_after_Fa_top = \
+                balance_horizontal_fluxes(Fa_E_top, Fa_N_top, W_top_1, isglobal)
+            Sa_after_Fa_down = \
+                balance_horizontal_fluxes(Fa_E_down, Fa_N_down, W_down_1, isglobal)
+            vertical_flux = get_vertical_fluxes_new(
+                E_1, P_1, W_top_1, W_down_1, Sa_after_Fa_down, Sa_after_Fa_top)
+            assert np.allclose(vertical_flux, Fa_Vert)
+
 #            sio.savemat(datapath[23], {'Fa_E_top':Fa_E_top, 'Fa_N_top':Fa_N_top, 'Fa_E_down':Fa_E_down,'Fa_N_down':Fa_N_down, 'Fa_Vert':Fa_Vert, 'E':E, 'P':P, 
 #                                                                                    'W_top':W_top, 'W_down':W_down}, do_compression=True)
             
