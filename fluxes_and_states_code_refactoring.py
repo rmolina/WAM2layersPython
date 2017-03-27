@@ -140,19 +140,16 @@ def get_water(current_date, latnrs, lonnrs, gridcell_geometry, boundary):
 def get_horizontal_fluxes(total_column_water, current_date, latnrs, lonnrs):
     """ calculates horizontal water fluxes """
 
-    # Vertical integral of water vapour flux
-    viwve = read_netcdf('viwve', current_date, latnrs, lonnrs)  # eastward
-    viwvn = read_netcdf('viwvn', current_date, latnrs, lonnrs)  # northward
-    # Vertical integral of cloud liquid water flux
-    vilwe = read_netcdf('vilwe', current_date, latnrs, lonnrs)  # eastward
-    vilwn = read_netcdf('vilwn', current_date, latnrs, lonnrs)  # northward
-    # Vertical integral of cloud frozen water flux
-    viiwe = read_netcdf('viiwe', current_date, latnrs, lonnrs)  # eastward
-    viiwn = read_netcdf('viiwn', current_date, latnrs, lonnrs)  # northward
+    # sum water states [kg*m-1*s-1]
+    eastward_water_flux = (
+        read_netcdf('viwve', current_date, latnrs, lonnrs) +  # water vapour
+        read_netcdf('vilwe', current_date, latnrs, lonnrs) +  # liquid water
+        read_netcdf('viiwe', current_date, latnrs, lonnrs))   # frozen water
 
-    # sum water states
-    eastward_water_flux = viwve + vilwe + viiwe  # kg*m-1*s-1
-    northward_water_flux = viwvn + vilwn + viiwn  # kg*m-1*s-1
+    northward_water_flux = (
+        read_netcdf('viwvn', current_date, latnrs, lonnrs) +  # water vapour
+        read_netcdf('vilwn', current_date, latnrs, lonnrs) +  # liquid water
+        read_netcdf('viiwn', current_date, latnrs, lonnrs))   # frozen water
 
     # eastward and northward fluxes
     u_wind_component = read_netcdf('u', current_date, latnrs, lonnrs)
