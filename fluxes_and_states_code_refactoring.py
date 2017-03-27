@@ -100,8 +100,10 @@ def get_atmospheric_pressure(current_date, levels, latnrs, lonnrs):
             surface_pressure[:, np.newaxis])
 
 
-def get_water(current_date, latnrs, lonnrs, gridcell_area, boundary):
+def get_water(current_date, latnrs, lonnrs, gridcell_geometry, boundary):
     """ calculate water volumes for the two layers """
+
+    area, side_length, top_length, bottom_length = gridcell_geometry
 
     k = np.array([0, 17, 27, 32, 35, 38, 41, 44, 47, 48, 51, 54, 55, 56, 57,
                   58, 59, 60])
@@ -127,10 +129,10 @@ def get_water(current_date, latnrs, lonnrs, gridcell_area, boundary):
     vapor = vapor_top + vapor_bottom
 
     water_top_layer = (total_column_water * (vapor_top / vapor) *
-                       gridcell_area / WATER_DENSITY)
+                       area / WATER_DENSITY)
 
     water_bottom_layer = (total_column_water * (vapor_bottom / vapor) *
-                          gridcell_area / WATER_DENSITY)
+                          area / WATER_DENSITY)
 
     return calculated_total_column_water, water_top_layer, water_bottom_layer
 
@@ -186,10 +188,12 @@ def get_two_layer_fluxes(water_flux, tcw_flux, boundary):
     return top_layer_flux, bottom_layer_flux
 
 
-def get_evaporation_precipitation(current_date, latnrs, lonnrs, gridcell_area):
+def get_evaporation_precipitation(current_date, latnrs, lonnrs, gridcell_geometry):
     """ get evaporation and precipitation data from ERA Interim netCDF files,
     disaggregate the data into 3h accumulated values and transfer invalid
     (by sign convention) evaporation into precipitation """
+
+    area, side_length, top_length, bottom_length = gridcell_geometry
 
     evaporation = read_netcdf('e', current_date, latnrs, lonnrs)
     precipitation = read_netcdf('tp', current_date, latnrs, lonnrs)
@@ -226,8 +230,8 @@ def get_evaporation_precipitation(current_date, latnrs, lonnrs, gridcell_area):
     evaporation = -np.minimum(evaporation, 0)
 
     # calculate volumes
-    evaporation_volume = evaporation * gridcell_area
-    precipitation_volume = precipitation * gridcell_area
+    evaporation_volume = evaporation * area
+    precipitation_volume = precipitation * area
 
     return evaporation_volume, precipitation_volume
 
@@ -319,7 +323,6 @@ def stable_layer_fluxes(water, eastern_flux, northern_flux, refined_timestep,
     northern *= northern_posneg
 
     return eastern, northern
-
 
 
 def balance_horizontal_fluxes(eastern, northern, water, isglobal):
@@ -423,3 +426,57 @@ def get_vertical_fluxes_new(evap, precip, w_top, w_bottom,
     fa_vert = fa_vert_stable * fa_vert_posneg
 
     return fa_vert
+
+
+def fluxes_and_storages(day, latnrs, lonnrs, gridcell_geometry, boundary,
+                        divt, timestep, isglobal):
+    """ gets all done for a single day """
+
+    # integrate specific humidity to get the (total) column water (vapor)
+    w_total, w_top, w_bottom = get_water(day, latnrs, lonnrs,
+                                         gridcell_geometry, boundary)
+
+    # calculate horizontal moisture fluxes
+    ewf, nwf, eastward_tcw, northward_tcw = \
+         get_horizontal_fluxes(w_total, day, latnrs, lonnrs)
+
+    east_top, east_bottom = \
+        get_two_layer_fluxes(ewf, eastward_tcw, boundary)
+
+    north_top, north_bottom = \
+        get_two_layer_fluxes(nwf, northward_tcw, boundary)
+
+    # evaporation and precipitation
+    evaporation, precipitation = \
+        get_evaporation_precipitation(day, latnrs, lonnrs, gridcell_geometry)
+
+    # put data on a smaller time step
+    east_top, north_top, east_bottom, north_bottom = \
+        refine_fluxes(east_top, north_top, east_bottom, north_bottom, divt)
+
+    evaporation, precipitation = refine_evap_precip(evaporation, precipitation, divt)
+
+    w_top = refine_water(w_top, divt)
+    w_bottom = refine_water(w_bottom, divt)
+
+    # stabilize horizontal fluxes and get everything in (m3 per smaller timestep)
+
+    east_top, north_top = \
+        stable_layer_fluxes(w_top, east_top, north_top, timestep / divt,
+                            gridcell_geometry)
+
+    east_bottom, north_bottom = \
+        stable_layer_fluxes(w_bottom, east_bottom, north_bottom,
+                            timestep / divt, gridcell_geometry)
+
+    #7 determine the vertical moisture flux
+    sa_after_fa_top = \
+        balance_horizontal_fluxes(east_top, north_top, w_top, isglobal)
+    sa_after_fa_bottom = \
+        balance_horizontal_fluxes(east_bottom, north_bottom, w_bottom, isglobal)
+    vertical_flux = \
+        get_vertical_fluxes_new(evaporation, precipitation, w_top, w_bottom,
+                                sa_after_fa_bottom, sa_after_fa_top)
+
+    return (east_top, north_top, east_bottom, north_bottom, vertical_flux,
+            evaporation, precipitation, w_top, w_bottom)

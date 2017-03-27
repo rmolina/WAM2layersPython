@@ -16,16 +16,7 @@ from Fluxes_and_States_Masterscript import (data_path, getW, getwind,
                                             get_stablefluxes, getFa_Vert)
 import numpy as np
 
-from fluxes_and_states_code_refactoring import (get_water,
-                                                get_horizontal_fluxes,
-                                                get_two_layer_fluxes,
-                                                get_evaporation_precipitation,
-                                                refine_fluxes,
-                                                refine_evap_precip,
-                                                refine_water,
-                                                stable_layer_fluxes,
-                                                balance_horizontal_fluxes,
-                                                get_vertical_fluxes_new)
+from fluxes_and_states_code_refactoring import fluxes_and_storages
 
 #BEGIN OF INPUT (FILL THIS IN)
 years = np.arange(2010, 2011) #fill in the years
@@ -73,9 +64,6 @@ latitude, longitude, lsm, g, density_water, timestep, A_gridcell, \
     L_N_gridcell, L_S_gridcell, L_EW_gridcell, gridcell = \
     getconstants(latnrs, lonnrs, lake_mask, invariant_data)
 
-# FIXME: we only need getconstants() for this values.
-gridcell_geometry = (A_gridcell, L_EW_gridcell, L_N_gridcell, L_S_gridcell)
-
 # loop through the years
 for yearnumber in years:
 
@@ -101,12 +89,6 @@ for yearnumber in years:
 
             day = datetime.datetime(yearnumber, 1, 1) + datetime.timedelta(days=a)
 
-            cw_new, W_top_new, W_down_new = \
-                get_water(day, latnrs, lonnrs, A_gridcell, boundary)
-            assert np.allclose(cw_new, cw)
-            assert np.allclose(W_top_new, W_top)
-            assert np.allclose(W_down_new, W_down)
-
             #2 wind in between pressure levels
             U, V = getwind(latnrs, lonnrs, final_time, a, yearnumber,
                            begin_time, count_time, datapath)
@@ -117,56 +99,16 @@ for yearnumber in years:
                       begin_time, yearnumber, a, final_time, datapath,
                       latitude, longitude)
 
-            (ewf, nwf, eastward_tcw, northward_tcw) = \
-                 get_horizontal_fluxes(cw, day, latnrs, lonnrs)
-
-#            east_top, north_top, east_bottom, north_bottom = \
-#                correct_horizontal_fluxes(ewf, nwf, eastward_tcw,
-#                                          northward_tcw, boundary)
-
-            east_top, east_bottom = \
-                get_two_layer_fluxes(ewf, eastward_tcw, boundary)
-            assert np.allclose(east_top, Fa_E_top)
-            assert np.allclose(east_bottom, Fa_E_down)
-
-            north_top, north_bottom = \
-                get_two_layer_fluxes(nwf, northward_tcw, boundary)
-            assert np.allclose(north_top, Fa_N_top)
-            assert np.allclose(north_bottom, Fa_N_down)
-
             #4 evaporation and precipitation
             E, P = getEP(latnrs, lonnrs, yearnumber, begin_time, count_time,
                          latitude, longitude, A_gridcell, datapath)
 
-            evaporation, precipitation = \
-                get_evaporation_precipitation(day, latnrs, lonnrs, A_gridcell)
-            assert np.allclose(evaporation, E)
-            assert np.allclose(precipitation, P)
-            
             #5 put data on a smaller time step
             Fa_E_top_1, Fa_N_top_1, Fa_E_down_1, Fa_N_down_1, \
                 E_1, P_1, W_top_1, W_down_1 = \
                     getrefined(Fa_E_top, Fa_N_top, Fa_E_down, Fa_N_down,
                                W_top, W_down, E, P, divt, count_time,
                                latitude, longitude)
-
-            east_top, north_top, east_bottom, north_bottom = \
-                refine_fluxes(Fa_E_top, Fa_N_top, Fa_E_down, Fa_N_down, divt)
-            assert np.allclose(east_top, Fa_E_top_1)
-            assert np.allclose(north_top, Fa_N_top_1)
-            assert np.allclose(east_bottom, Fa_E_down_1)
-            assert np.allclose(north_bottom, Fa_N_down_1)
-
-            evaporation, precipitation, = refine_evap_precip(E, P, divt)
-            assert np.allclose(evaporation, E_1)
-            assert np.allclose(precipitation, P_1)
-
-            W_top_small = refine_water(W_top, divt)
-            assert np.allclose(W_top_small, W_top_1)
-
-            W_down_small = refine_water(W_down, divt)
-            assert np.allclose(W_down_small, W_down_1)
-
 
             #6 stabilize horizontal fluxes and get everything in (m3 per smaller timestep)
             Fa_E_top, Fa_E_down, Fa_N_top, Fa_N_down = \
@@ -175,41 +117,46 @@ for yearnumber in years:
                                  L_EW_gridcell,density_water, L_N_gridcell,
                                  L_S_gridcell, latitude, longitude, count_time)
 
-
-            refined_timestep = timestep / divt
-            east_top, north_top = \
-                stable_layer_fluxes(W_top_1, Fa_E_top_1, Fa_N_top_1,
-                                    refined_timestep, gridcell_geometry)
-            assert np.allclose(east_top, Fa_E_top)
-            assert np.allclose(north_top, Fa_N_top)
-
-            east_bottom, north_bottom = \
-                stable_layer_fluxes(W_down_1, Fa_E_down_1, Fa_N_down_1,
-                                    refined_timestep, gridcell_geometry)
-            assert np.allclose(east_bottom, Fa_E_down)
-            assert np.allclose(north_bottom, Fa_N_down)
-            
             #7 determine the vertical moisture flux
             Fa_Vert_raw, Fa_Vert = getFa_Vert(Fa_E_top, Fa_E_down, Fa_N_top,
                                               Fa_N_down, E_1, P_1,W_top_1, W_down_1,
                                               divt, count_time, latitude,
                                               longitude, isglobal)
 
-            Sa_after_Fa_top = \
-                balance_horizontal_fluxes(Fa_E_top, Fa_N_top, W_top_1, isglobal)
-            Sa_after_Fa_down = \
-                balance_horizontal_fluxes(Fa_E_down, Fa_N_down, W_down_1, isglobal)
-            vertical_flux = get_vertical_fluxes_new(
-                E_1, P_1, W_top_1, W_down_1, Sa_after_Fa_down, Sa_after_Fa_top)
-            assert np.allclose(vertical_flux, Fa_Vert)
 
-#            sio.savemat(datapath[23], {'Fa_E_top':Fa_E_top, 'Fa_N_top':Fa_N_top, 'Fa_E_down':Fa_E_down,'Fa_N_down':Fa_N_down, 'Fa_Vert':Fa_Vert, 'E':E, 'P':P, 
-#                                                                                    'W_top':W_top, 'W_down':W_down}, do_compression=True)
+#            sio.savemat(datapath[23],
+#                        {'Fa_E_top':Fa_E_top,
+#                         'Fa_N_top':Fa_N_top,
+#                         'Fa_E_down':Fa_E_down,
+#                         'Fa_N_down':Fa_N_down,
+#                         'Fa_Vert':Fa_Vert,
+#                         'E':E,
+#                         'P':P,
+#                         'W_top':W_top,
+#                         'W_down':W_down
+#                        }, do_compression=True)
             
             # alternative, but slower and more spacious
             # np.savez_compressed(datapath[23],Fa_E_top,Fa_N_top,Fa_E_down,Fa_N_down,Fa_Vert,E,P,W_top,W_down)
             
         end = timer()
         print 'Runtime fluxes_and_storages for day ' + str(a+1) + ' in year ' + str(yearnumber) + ' is',(end - start),' seconds.'
-end1 = timer()
+
+        # test the new code
+
+        gridcell_geometry = (A_gridcell, L_EW_gridcell, L_N_gridcell, L_S_gridcell)
+        day = datetime.datetime(yearnumber, 1, 1) + datetime.timedelta(days=a)
+
+        start = timer()
+        (east_top, north_top, east_bottom, north_bottom, vertical_flux,
+            evaporation, precipitation, water_top, water_bottom) = \
+            fluxes_and_storages(day, latnrs, lonnrs, gridcell_geometry,
+                                boundary, divt, timestep, isglobal)
+        end = timer()
+        print 'Runtime fluxes_and_storages_refactoring for %s is %.2f seconds.\n' % (day.date(), end - start)
+
+        # TIP: refactored functions were individually tested with np.allclose()
+        # See: https://github.com/rmolina/WAM2layersPython/blob/93d2d684b038a9e05582659fa14204cefa929e9c/Fluxes_and_States.py
+
+        end1 = timer()
 print 'The total runtime is',(end1-start1),' seconds.'
