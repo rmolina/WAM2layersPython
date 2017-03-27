@@ -16,7 +16,7 @@ from Fluxes_and_States_Masterscript import (data_path, getW, getwind,
                                             get_stablefluxes, getFa_Vert)
 import numpy as np
 
-from fluxes_and_states_code_refactoring import fluxes_and_storages
+from wam2layers import fluxes_and_storages
 
 #BEGIN OF INPUT (FILL THIS IN)
 years = np.arange(2010, 2011) #fill in the years
@@ -151,7 +151,7 @@ for yearnumber in years:
         (east_top, north_top, east_bottom, north_bottom, vertical_flux,
             evaporation, precipitation, water_top, water_bottom) = \
             fluxes_and_storages(day, latnrs, lonnrs, gridcell_geometry,
-                                boundary, divt, timestep, isglobal)
+                                boundary, divt, timestep)
         end = timer()
         print 'Runtime fluxes_and_storages_refactoring for %s is %.2f seconds.\n' % (day.date(), end - start)
 

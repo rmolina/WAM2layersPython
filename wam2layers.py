@@ -6,15 +6,103 @@ Created on Sat Mar 25 11:56:58 2017
 @author: rmolina
 """
 
+# standard imports
 import datetime
-
+import os.path
+# third party imports
 import netCDF4
 import numpy as np
+from ecmwfapi import ECMWFDataServer
 from scipy.constants import g
+# our own imports
+import wam2layers_config
 
 
 WATER_DENSITY = 1000.  # kg/m3
-DATA_DIR = 'input'
+AUTHALIC_EARTH_RADIUS = 6371007.2  # [m]
+
+
+def download_era_interim_data(year, grid=1.5, just_one_day=False):
+    """ downloads data from ERA Interim """
+
+    # FIXME: we are only checking that the file exists.
+    # we need to check whether the data is actually available
+    # i.e,, open the dataset, check the time dmension ,an return if ok
+    # or keep going and download
+    # This wil also help to identify cases when we peviously downloaded
+    # just_one_day but we want to re-download the files for the full year!
+
+    if just_one_day:
+        date_param = "%s0101" % year
+    else:
+        date_param = "%s0101/to/%s1231" % (year, year)
+
+    server = ECMWFDataServer()
+
+    server_config = {
+        'dataset' : "interim",
+        'date'    : date_param,
+        'stream'  : "oper",
+        'time'    : "00:00:00/06:00:00/12:00:00/18:00:00",
+        'step'    : "0",
+        'type'    : "an",
+        'grid'    : "%s/%s" % (grid, grid),
+        'levtype' : "sfc",
+        'class'   : "ei",
+        #'area'    : "%s/%s/%s/%s" % (20,-90,-40,-30)  # (north, west, south, east)
+        'format'  : "netcdf",
+    }
+
+    sfc_an = {
+        'viwve': 71.162,  # Vertical integral of eastward water vapour flux (ewvf)
+        'viwvn': 72.162,  # Vertical integral of northward water vapour flux (nwvf)
+        'vilwe': 88.162,  # Vertical integral of eastward cloud liquid water flux (eclwf)
+        'vilwn': 89.162,  # Vertical integral of northward cloud liquid water flux (nclwf)
+        'viiwe': 90.162,  # Vertical integral of eastward cloud frozen water flux (ecfwf)
+        'viiwn': 91.162,  # Vertical integral of northward cloud frozen water flux (ncfwf)
+        'sp': 134.128,  # Surface pressure
+        'tcw': 136.128,  # Total column water
+        'tcwv': 137.128,  # Total column water vapour
+    }
+
+    sfc_fc = {
+        'tp': 228.128,  # Total precipitation
+        'e': 182.128,  # Evaporation
+    }
+
+    ml_an = {
+        'u': 131.128,  # U component of wind
+        'v': 132.128,  # V component of wind
+        'q': 133.128,  # Specific humidity
+    }
+
+    for key, value in sfc_an.items():
+        filename = "%s/%s.%s.nc" % (wam2layers_config.data_dir, year, key)
+        if not os.path.isfile(filename):
+            server_config.update({'param': value,
+                                  'target': filename})
+            server.retrieve(server_config)
+
+    for key, value in sfc_fc.items():
+        filename = "%s/%s.%s.nc" % (wam2layers_config.data_dir, year, key)
+        if not os.path.isfile(filename):
+            server_config.update({'param': value,
+                                  'target': filename,
+                                  'type': "fc",
+                                  'time': "00:00:00/12:00:00",
+                                  'step': "3/6/9/12"})
+            server.retrieve(server_config)
+
+    for key, value in ml_an.items():
+        filename = "%s/%s.%s.nc" % (wam2layers_config.data_dir, year, key)
+        if not os.path.isfile(filename):
+            server_config.update(
+                {'param': "%s" % value, 'target': filename,
+                 'type': "an", 'levtype': "ml", 'step': "0",
+                 'time' : "00:00:00/06:00:00/12:00:00/18:00:00",
+                 'levelist': '/'.join(str(level) for level in wam2layers_config.levels)
+                })
+            server.retrieve(server_config)
 
 
 def read_netcdf(var, current_date, latnrs, lonnrs):
@@ -51,7 +139,7 @@ def read_netcdf(var, current_date, latnrs, lonnrs):
     if var in ['e', 'tp']:
         start += datetime.timedelta(hours=3)
 
-    with netCDF4.MFDataset("%s/*.%s.nc" % (DATA_DIR, var)) as dataset:
+    with netCDF4.MFDataset("%s/*.%s.nc" % (wam2layers_config.data_dir, var)) as dataset:
 
         time_dimension = netCDF4.num2date(dataset.variables["time"][:],
                                           dataset.variables["time"].units)
@@ -105,11 +193,10 @@ def get_water(current_date, latnrs, lonnrs, gridcell_geometry, boundary):
 
     area, side_length, top_length, bottom_length = gridcell_geometry
 
-    k = np.array([0, 17, 27, 32, 35, 38, 41, 44, 47, 48, 51, 54, 55, 56, 57,
-                  58, 59, 60])
+    levels = np.array([0] + wam2layers_config.levels)
 
     atmospheric_pressure = \
-        get_atmospheric_pressure(current_date, k, latnrs, lonnrs)
+        get_atmospheric_pressure(current_date, levels, latnrs, lonnrs)
 
     specific_humidity = read_netcdf('q', current_date, latnrs, lonnrs)
 
@@ -262,9 +349,12 @@ def refine_water(water, divt):
     # and a part is added at each step except the first one (at the first step
     # we are in an observed volume, there is no need to add anything)
 
+    # TIP: Do not assume each day will have 4 observations.
+    # This might not be the case for other datasets.
+    # FIXME: should we include num_obs in wam2layers_config.py ?
+    num_obs = water[:-1].shape[0]
     # TIP: partvector stores how many parts must be added at each step
-    # FIXME: this assumes 4 observations are available each day
-    partvector = np.tile(np.arange(divt), 4)
+    partvector = np.tile(np.arange(divt), num_obs)
 
     water_refined = (np.repeat(water[:-1], repeats=divt, axis=0) +
                      partvector[:, np.newaxis, np.newaxis] *
@@ -322,7 +412,7 @@ def stable_layer_fluxes(water, eastern_flux, northern_flux, refined_timestep,
     return eastern, northern
 
 
-def balance_horizontal_fluxes(eastern, northern, water, isglobal):
+def balance_horizontal_fluxes(eastern, northern, water):
     """ define the horizontal fluxes over the boundaries and calculates
     the water balance for one layer """
 
@@ -330,7 +420,7 @@ def balance_horizontal_fluxes(eastern, northern, water, isglobal):
 
     eastern_boundary = np.zeros_like(eastern)
     eastern_boundary[:, :, :-1] = 0.5 * (eastern[:, :, :-1] + eastern[:, :, 1:])
-    if isglobal:
+    if wam2layers_config.is_global:
         eastern_boundary[:, :, -1] = 0.5 * (eastern[:, :, -1] + eastern[:, :, 0])
 
     # separate directions west-east (all positive numbers)
@@ -426,7 +516,7 @@ def get_vertical_fluxes_new(evap, precip, w_top, w_bottom,
 
 
 def fluxes_and_storages(day, latnrs, lonnrs, gridcell_geometry, boundary,
-                        divt, timestep, isglobal):
+                        divt, timestep):
     """ gets all done for a single day """
 
     # integrate specific humidity to get the (total) column water (vapor)
@@ -468,12 +558,54 @@ def fluxes_and_storages(day, latnrs, lonnrs, gridcell_geometry, boundary,
 
     #7 determine the vertical moisture flux
     sa_after_fa_top = \
-        balance_horizontal_fluxes(east_top, north_top, w_top, isglobal)
+        balance_horizontal_fluxes(east_top, north_top, w_top)
     sa_after_fa_bottom = \
-        balance_horizontal_fluxes(east_bottom, north_bottom, w_bottom, isglobal)
+        balance_horizontal_fluxes(east_bottom, north_bottom, w_bottom)
     vertical_flux = \
         get_vertical_fluxes_new(evaporation, precipitation, w_top, w_bottom,
                                 sa_after_fa_bottom, sa_after_fa_top)
 
     return (east_top, north_top, east_bottom, north_bottom, vertical_flux,
             evaporation, precipitation, w_top, w_bottom)
+
+
+def get_gridcell_geometry(latnrs):
+    """ calculates grid cell area and dimensions """
+    with netCDF4.MFDataset("%s/*.sp.nc" % wam2layers_config.data_dir) as dataset:
+        latitude = dataset.variables['latitude'][latnrs]
+
+    grid_size = np.abs(latitude[0] - latitude[1])
+
+    tops = np.radians(np.minimum(latitude + 0.5 * grid_size, +90))
+    bottoms = np.radians(np.maximum(latitude - 0.5 * grid_size, -90))
+
+    grid_size = np.radians(grid_size)
+
+    # TIP: length expressions are derived from the haversine formula:
+    # hav(d/r)= hav(lat2-lat1) + cos(lat1) * cos(lat2) * hav(lon2-lon1)
+    # See: http://math.stackexchange.com/a/479459
+
+    # let's define the haversine and inverse haversine functions:
+    hav = lambda x: np.sin(x/2)**2
+    inv_hav = lambda x: 2 * np.arcsin(np.sqrt(x))
+
+    # TIP: for the side length: lon2 = lon1
+    # then: hav(lon2-lon1) = 0,
+    # and the haversine formula becomes: hav(d/r) = hav(lat2-lat1)
+    # i.e.: d = r * (lat2-lat1)
+    side_length = AUTHALIC_EARTH_RADIUS * grid_size
+
+    # TIP: for the top and bottom lengths: lat2 = lat1
+    # then: hav(lat2-lat1) = 0
+    #       cos(lat1)*cos(lat2) = cos(lat1)**2
+    # and the haversine formula becomes: hav(d/r) = cos(lat1)**2 * hav(lon2-lon1)
+    # i.e.: d = r * inv_hav(cos(lat1)**2 * hav(lon2-lon1))
+    top_length = AUTHALIC_EARTH_RADIUS * inv_hav(np.cos(tops)**2 * hav(grid_size))
+    bottom_length = AUTHALIC_EARTH_RADIUS * inv_hav(np.cos(bottoms)**2 * hav(grid_size))
+
+    # TIP:  http://gis.stackexchange.com/a/29743
+    area = (AUTHALIC_EARTH_RADIUS ** 2 * grid_size *
+            np.abs(np.sin(tops) - np.sin(bottoms)))
+
+    return (area[np.newaxis, :, np.newaxis], top_length[np.newaxis, :, np.newaxis],
+            bottom_length, side_length)
