@@ -14,6 +14,10 @@ import netCDF4
 import numpy as np
 from ecmwfapi import ECMWFDataServer
 from scipy.constants import g
+import cartopy.io
+import shapely.ops
+import shapely.geometry
+
 # our own imports
 import wam2layers_config
 
@@ -609,3 +613,50 @@ def get_gridcell_geometry(latnrs):
 
     return (area[np.newaxis, :, np.newaxis], top_length[np.newaxis, :, np.newaxis],
             bottom_length, side_length)
+
+
+def wrap_lon360(lon):
+    """ Source: https://github.com/pyoceans/python-oceans/blob/master/oceans/ocfis/ocfis.py """
+    lon = np.atleast_1d(lon).copy()
+    positive = lon > 0
+    lon = lon % 360
+    lon[np.logical_and(lon == 0, positive)] = 360
+    return lon
+
+def wrap_lon180(lon):
+    """ Source: https://github.com/pyoceans/python-oceans/blob/master/oceans/ocfis/ocfis.py """
+    lon = np.atleast_1d(lon).copy()
+    angles = np.logical_or((lon < -180), (lon > 180))
+    lon[angles] = wrap_lon360(lon[angles] + 180) - 180
+    return lon
+
+def inpolygon(polygon, points):
+    """ https://ocefpaf.github.io/python4oceanographers/blog/2015/08/17/shapely_in_polygon/ """
+    return np.array([shapely.geometry.Point(x, y).intersects(polygon) for x, y in points],
+                    dtype=np.bool)
+
+def land_sea_mask():
+    """ builds the boolean land sea mask """
+    with netCDF4.MFDataset("%s/*.sp.nc" % wam2layers_config.data_dir) as dataset:
+        latitude = dataset.variables['latitude'][:]
+        longitude = wrap_lon180(dataset.variables['longitude'][:])
+
+    gridsize = latitude[0] - latitude[1]
+    xgrd, ygrd = np.meshgrid(longitude, latitude)
+
+    filename = '%s/lsm.%s.npy' % (wam2layers_config.data_dir, gridsize)
+
+    if os.path.isfile(filename):
+        mask = np.unpackbits(np.load(filename)).astype('bool')[:xgrd.size]
+    else:
+        shp = cartopy.io.shapereader.natural_earth(resolution='110m',
+                                                   category='physical',
+                                                   name='land')
+        # load the shapefile to use as mask and build the polygons
+        shp = cartopy.io.shapereader.Reader(shp)
+        geoms = shp.geometries()
+        polygon = shapely.ops.cascaded_union(list(geoms))
+        mask = inpolygon(polygon, zip(xgrd.ravel(), ygrd.ravel()))
+        np.save(filename, np.packbits(mask))
+
+    return xgrd, ygrd, mask.reshape(xgrd.shape)

@@ -65,3 +65,37 @@ main(years=np.arange(2010, 2011),
      latnrs=np.arange(7, 114),
      lonnrs=np.arange(0, 240),
      boundary=8)
+
+
+def lsm_demo():
+    """ plors a masked layer of time-averaged surface pressure """
+
+    import netCDF4
+    import cartopy.crs
+    import matplotlib.pyplot as plt
+    import wam2layers_config
+    import numpy.ma as ma
+
+
+    xgrd, ygrd, mask = wam2layers.land_sea_mask()
+
+    with netCDF4.MFDataset("%s/*.sp.nc" % wam2layers_config.data_dir) as dataset:
+        pres = np.average(dataset.variables['sp'][:], axis=0)
+
+    projection = cartopy.crs.PlateCarree()
+
+    # plot mask
+    fig, axis = plt.subplots(subplot_kw=dict(projection=projection))
+    axis.plot(xgrd[mask], ygrd[mask], 'k.', alpha=0.25)
+
+    # plot masked data
+    fig, axis = plt.subplots(subplot_kw=dict(projection=projection))
+    #cs = ax.pcolormesh(longitude, latitude, ma.masked_array(pressure, ~m))
+    plt.contourf(ma.masked_array(xgrd, mask),
+                 ma.masked_array(ygrd, mask),
+                 ma.masked_array(pres, ~mask))
+    axis.coastlines(resolution='50m')
+    axis.set_extent([-90, -30, -40, +20])
+
+
+#lsm_demo()
