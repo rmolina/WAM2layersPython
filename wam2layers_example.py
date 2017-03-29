@@ -26,7 +26,7 @@ def main(years, boundary=8, divt=24, timestep=6*3600):
     wam2layers.download_era_interim_data(years[-1] + 1, just_one_day=True)
 
     main_start = timer()
-    geometry = wam2layers.get_gridcell_geometry()
+    gridcell_geometry = wam2layers.get_gridcell_geometry()
 
     for year in years:
 
@@ -40,7 +40,7 @@ def main(years, boundary=8, divt=24, timestep=6*3600):
 
             (east_top, north_top, east_bottom, north_bottom, vertical_flux,
              evaporation, precipitation, water_top, water_bottom) = \
-             wam2layers.fluxes_and_storages(day_as_dt, geometry, boundary, divt, timestep)
+             wam2layers.fluxes_and_storages(day_as_dt, gridcell_geometry, boundary, divt, timestep)
 
             scipy.io.savemat('interdata/%s-%sfluxes_storages.mat' % (year, day),
                              {'Fa_E_top': east_top,
@@ -60,12 +60,11 @@ def main(years, boundary=8, divt=24, timestep=6*3600):
     print '[*] Total runtime is %.2f seconds.' % (timer() - main_start)
 
 
-main(years=np.arange(2010, 2011),
-     boundary=8)
+main(years=np.arange(2010, 2011), boundary=8)
 
 
 def lsm_demo():
-    """ plors a masked layer of time-averaged surface pressure """
+    """ plots a masked layer of time-averaged surface pressure """
 
     import netCDF4
     import cartopy.crs

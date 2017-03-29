@@ -9,6 +9,7 @@ Created on Sat Mar 25 11:56:58 2017
 # standard imports
 import datetime
 import os.path
+import collections
 # third party imports
 import netCDF4
 import numpy as np
@@ -17,7 +18,6 @@ from scipy.constants import g
 import cartopy.io
 import shapely.ops
 import shapely.geometry
-
 # our own imports
 import wam2layers_config
 
@@ -196,16 +196,12 @@ def get_atmospheric_pressure(current_date, levels):
             surface_pressure[:, np.newaxis])
 
 
-def get_water(current_date, gridcell_geometry, boundary):
+def get_water(current_date, gridcell, boundary):
     """ calculate water volumes for the two layers """
-
-    area, side_length, top_length, bottom_length = gridcell_geometry
 
     levels = np.array([0] + wam2layers_config.levels)
 
-    atmospheric_pressure = \
-        get_atmospheric_pressure(current_date, levels)
-
+    atmospheric_pressure = get_atmospheric_pressure(current_date, levels)
     specific_humidity = read_netcdf('q', current_date)
 
     cwv = specific_humidity * np.diff(atmospheric_pressure, axis=1) / g  # [kg/m2]
@@ -224,10 +220,10 @@ def get_water(current_date, gridcell_geometry, boundary):
     vapor = vapor_top + vapor_bottom
 
     water_top_layer = (total_column_water * (vapor_top / vapor) *
-                       area / WATER_DENSITY)
+                       gridcell.area / WATER_DENSITY)
 
     water_bottom_layer = (total_column_water * (vapor_bottom / vapor) *
-                          area / WATER_DENSITY)
+                          gridcell.area / WATER_DENSITY)
 
     return calculated_total_column_water, water_top_layer, water_bottom_layer
 
@@ -280,12 +276,10 @@ def get_two_layer_fluxes(water_flux, tcw_flux, boundary):
     return top_layer_flux, bottom_layer_flux
 
 
-def get_evaporation_precipitation(current_date, gridcell_geometry):
+def get_evaporation_precipitation(current_date, gridcell):
     """ get evaporation and precipitation data from ERA Interim netCDF files,
     disaggregate the data into 3h accumulated values and transfer invalid
     (by sign convention) evaporation into precipitation """
-
-    area, side_length, top_length, bottom_length = gridcell_geometry
 
     evaporation = read_netcdf('e', current_date)
     precipitation = read_netcdf('tp', current_date)
@@ -322,8 +316,8 @@ def get_evaporation_precipitation(current_date, gridcell_geometry):
     evaporation = -np.minimum(evaporation, 0)
 
     # calculate volumes
-    evaporation_volume = evaporation * area
-    precipitation_volume = precipitation * area
+    evaporation_volume = evaporation * gridcell.area
+    precipitation_volume = precipitation * gridcell.area
 
     return evaporation_volume, precipitation_volume
 
@@ -376,16 +370,15 @@ def refine_water(water, divt):
 
 
 def stable_layer_fluxes(water, eastern_flux, northern_flux, refined_timestep,
-                        gridcell_geometry):
+                        gridcell):
     """ get stable eastern and northen fluxes for one layer """
-    area, side_length, top_length, bottom_length = gridcell_geometry
 
     # convert to m3
     # TIP: [(kg*m^-1*s^-1) * s * m * (kg^-1*m^3)] = [m3]
-    eastern = (eastern_flux * refined_timestep * side_length / WATER_DENSITY)
+    eastern = (eastern_flux * refined_timestep * gridcell.side_length / WATER_DENSITY)
 
     northern = (northern_flux * refined_timestep * 0.5 *
-                (top_length + bottom_length)[np.newaxis, :, np.newaxis] /
+                (gridcell.top_length + gridcell.bottom_length) /
                 WATER_DENSITY)
 
     # find out where the negative fluxes are
@@ -523,13 +516,12 @@ def get_vertical_fluxes_new(evap, precip, w_top, w_bottom,
     return fa_vert
 
 
-def fluxes_and_storages(day, gridcell_geometry, boundary,
+def fluxes_and_storages(day, gridcell, boundary,
                         divt, timestep):
     """ gets all done for a single day """
 
     # integrate specific humidity to get the (total) column water (vapor)
-    w_total, w_top, w_bottom = get_water(day,
-                                         gridcell_geometry, boundary)
+    w_total, w_top, w_bottom = get_water(day, gridcell, boundary)
 
     # calculate horizontal moisture fluxes
     ewf, nwf, eastward_tcw, northward_tcw = \
@@ -543,7 +535,7 @@ def fluxes_and_storages(day, gridcell_geometry, boundary,
 
     # evaporation and precipitation
     evaporation, precipitation = \
-        get_evaporation_precipitation(day, gridcell_geometry)
+        get_evaporation_precipitation(day, gridcell)
 
     # put data on a smaller time step
     east_top, north_top, east_bottom, north_bottom = \
@@ -558,11 +550,11 @@ def fluxes_and_storages(day, gridcell_geometry, boundary,
 
     east_top, north_top = \
         stable_layer_fluxes(w_top, east_top, north_top, timestep / divt,
-                            gridcell_geometry)
+                            gridcell)
 
     east_bottom, north_bottom = \
         stable_layer_fluxes(w_bottom, east_bottom, north_bottom,
-                            timestep / divt, gridcell_geometry)
+                            timestep / divt, gridcell)
 
     #7 determine the vertical moisture flux
     sa_after_fa_top = \
@@ -578,11 +570,23 @@ def fluxes_and_storages(day, gridcell_geometry, boundary,
 
 
 def get_gridcell_geometry():
-    """ calculates grid cell area and dimensions """
-    # FIXME; these 3 lines should be a get_lat_lon() function
+    """
+    Calculates the grid cell area and dimensions.
+
+    The length expressions are derived from the haversine formula:
+        hav(d/r)= hav(lat2-lat1) + cos(lat1) * cos(lat2) * hav(lon2-lon1)
+    See: http://math.stackexchange.com/a/479459
+
+    The expression for the area comes from:  http://gis.stackexchange.com/a/29743
+    See also: https://badc.nerc.ac.uk/help/coordinates/cell-surf-area.html
+    """
+    # FIXME: these 3 lines should be a get_lat_lon() function
     latnrs, lonnrs = get_latnrs_lonnrs()
     with netCDF4.MFDataset("%s/*.sp.nc" % wam2layers_config.data_dir) as dataset:
         latitude = dataset.variables['latitude'][latnrs]
+
+    geometry = collections.namedtuple('geometry', ['area', 'top_length',
+                                                   'bottom_length', 'side_length'])
 
     grid_size = np.abs(latitude[0] - latitude[1])
 
@@ -591,34 +595,29 @@ def get_gridcell_geometry():
 
     grid_size = np.radians(grid_size)
 
-    # TIP: length expressions are derived from the haversine formula:
-    # hav(d/r)= hav(lat2-lat1) + cos(lat1) * cos(lat2) * hav(lon2-lon1)
-    # See: http://math.stackexchange.com/a/479459
-
-    # let's define the haversine and inverse haversine functions:
+    # define the haversine and inverse haversine functions:
     hav = lambda x: np.sin(x/2)**2
     inv_hav = lambda x: 2 * np.arcsin(np.sqrt(x))
 
-    # TIP: for the side length: lon2 = lon1
-    # then: hav(lon2-lon1) = 0,
-    # and the haversine formula becomes: hav(d/r) = hav(lat2-lat1)
+    # For the "side" length, lon2 = lon1, then: hav(lon2-lon1) = 0, and the
+    # haversine formula becomes: hav(d/r) = hav(lat2-lat1)
     # i.e.: d = r * (lat2-lat1)
     side_length = AUTHALIC_EARTH_RADIUS * grid_size
 
-    # TIP: for the top and bottom lengths: lat2 = lat1
-    # then: hav(lat2-lat1) = 0
-    #       cos(lat1)*cos(lat2) = cos(lat1)**2
+    # For the top and bottom lengths, lat2 = lat1, then:
+    #    hav(lat2-lat1) = 0
+    #    cos(lat1)*cos(lat2) = cos(lat1)**2
     # and the haversine formula becomes: hav(d/r) = cos(lat1)**2 * hav(lon2-lon1)
     # i.e.: d = r * inv_hav(cos(lat1)**2 * hav(lon2-lon1))
     top_length = AUTHALIC_EARTH_RADIUS * inv_hav(np.cos(tops)**2 * hav(grid_size))
     bottom_length = AUTHALIC_EARTH_RADIUS * inv_hav(np.cos(bottoms)**2 * hav(grid_size))
 
-    # TIP:  http://gis.stackexchange.com/a/29743
-    area = (AUTHALIC_EARTH_RADIUS ** 2 * grid_size *
-            np.abs(np.sin(tops) - np.sin(bottoms)))
+    area = (AUTHALIC_EARTH_RADIUS ** 2 * grid_size * np.abs(np.sin(tops) - np.sin(bottoms)))
 
-    return (area[np.newaxis, :, np.newaxis], top_length[np.newaxis, :, np.newaxis],
-            bottom_length, side_length)
+    return geometry(area[np.newaxis, :, np.newaxis],
+                    top_length[np.newaxis, :, np.newaxis],
+                    bottom_length[np.newaxis, :, np.newaxis],
+                    side_length)
 
 
 def wrap_lon360(lon):
@@ -669,7 +668,7 @@ def land_sea_mask():
 
 
 def get_latnrs_lonnrs():
-    """ provides indices to slicing the lat and lon dimensions """
+    """ provides indices for slicing the lat and lon dimensions """
     # FIXME: we should have a single function returning lat and lon
     with netCDF4.MFDataset("%s/*.sp.nc" % wam2layers_config.data_dir) as dataset:
         latitude = dataset.variables['latitude'][:]
