@@ -24,6 +24,7 @@ import wam2layers_config
 
 WATER_DENSITY = 1000.  # kg/m3
 AUTHALIC_EARTH_RADIUS = 6371007.2  # [m]
+IS_GLOBAL = wam2layers_config.region[1] - wam2layers_config.region[0] == 360
 
 
 def download_era_interim_data(year, grid=1.5, just_one_day=False):
@@ -35,6 +36,8 @@ def download_era_interim_data(year, grid=1.5, just_one_day=False):
     # or keep going and download
     # This wil also help to identify cases when we peviously downloaded
     # just_one_day but we want to re-download the files for the full year!
+
+    # FIXME: download only the region!!!
 
     if just_one_day:
         date_param = "%s0101" % year
@@ -109,7 +112,7 @@ def download_era_interim_data(year, grid=1.5, just_one_day=False):
             server.retrieve(server_config)
 
 
-def read_netcdf(var, current_date, latnrs, lonnrs):
+def read_netcdf(var, current_date):
     """ reads ERA Interim data from a netCDF file """
 
     # TIP: some variables are stored in the netCDF file using common
@@ -150,6 +153,7 @@ def read_netcdf(var, current_date, latnrs, lonnrs):
 
         start, end = np.searchsorted(time_dimension, [start, end])
 
+        latnrs, lonnrs = get_latnrs_lonnrs()
         if var in ['q', 'v', 'u']:  # var has levels
             data = dataset.variables[var_name][start:end, :, latnrs, lonnrs]
         else:
@@ -158,7 +162,7 @@ def read_netcdf(var, current_date, latnrs, lonnrs):
     return data
 
 
-def get_atmospheric_pressure(current_date, levels, latnrs, lonnrs):
+def get_atmospheric_pressure(current_date, levels):
     """ calculates atmospheric pressure [Pa] at model levels """
     # Source for A and B vertical discretisation values:
     # http://www.ecmwf.int/en/forecasts/documentation-and-support/60-model-levels
@@ -185,14 +189,14 @@ def get_atmospheric_pressure(current_date, levels, latnrs, lonnrs):
          0.879657, 0.907884, 0.93194, 0.951822, 0.967645, 0.979663, 0.98827,
          0.994019, 0.99763, 1])
 
-    surface_pressure = read_netcdf('sp', current_date, latnrs, lonnrs)
+    surface_pressure = read_netcdf('sp', current_date)
 
     return (vertical_discretisation_a[np.newaxis, levels, np.newaxis, np.newaxis] +
             vertical_discretisation_b[np.newaxis, levels, np.newaxis, np.newaxis] *
             surface_pressure[:, np.newaxis])
 
 
-def get_water(current_date, latnrs, lonnrs, gridcell_geometry, boundary):
+def get_water(current_date, gridcell_geometry, boundary):
     """ calculate water volumes for the two layers """
 
     area, side_length, top_length, bottom_length = gridcell_geometry
@@ -200,9 +204,9 @@ def get_water(current_date, latnrs, lonnrs, gridcell_geometry, boundary):
     levels = np.array([0] + wam2layers_config.levels)
 
     atmospheric_pressure = \
-        get_atmospheric_pressure(current_date, levels, latnrs, lonnrs)
+        get_atmospheric_pressure(current_date, levels)
 
-    specific_humidity = read_netcdf('q', current_date, latnrs, lonnrs)
+    specific_humidity = read_netcdf('q', current_date)
 
     cwv = specific_humidity * np.diff(atmospheric_pressure, axis=1) / g  # [kg/m2]
 
@@ -210,7 +214,7 @@ def get_water(current_date, latnrs, lonnrs, gridcell_geometry, boundary):
     total_column_water_vapor = np.sum(cwv, axis=1)
 
     # Total column water
-    total_column_water = read_netcdf('tcw', current_date, latnrs, lonnrs)
+    total_column_water = read_netcdf('tcw', current_date)
     calculated_total_column_water = \
         (total_column_water / total_column_water_vapor)[:, np.newaxis] * cwv
 
@@ -228,23 +232,23 @@ def get_water(current_date, latnrs, lonnrs, gridcell_geometry, boundary):
     return calculated_total_column_water, water_top_layer, water_bottom_layer
 
 
-def get_horizontal_fluxes(total_column_water, current_date, latnrs, lonnrs):
+def get_horizontal_fluxes(total_column_water, current_date):
     """ calculates horizontal water fluxes """
 
     # sum water states [kg*m-1*s-1]
     eastward_water_flux = (
-        read_netcdf('viwve', current_date, latnrs, lonnrs) +  # water vapour
-        read_netcdf('vilwe', current_date, latnrs, lonnrs) +  # liquid water
-        read_netcdf('viiwe', current_date, latnrs, lonnrs))   # frozen water
+        read_netcdf('viwve', current_date) +  # water vapour
+        read_netcdf('vilwe', current_date) +  # liquid water
+        read_netcdf('viiwe', current_date))   # frozen water
 
     northward_water_flux = (
-        read_netcdf('viwvn', current_date, latnrs, lonnrs) +  # water vapour
-        read_netcdf('vilwn', current_date, latnrs, lonnrs) +  # liquid water
-        read_netcdf('viiwn', current_date, latnrs, lonnrs))   # frozen water
+        read_netcdf('viwvn', current_date) +  # water vapour
+        read_netcdf('vilwn', current_date) +  # liquid water
+        read_netcdf('viiwn', current_date))   # frozen water
 
     # eastward and northward fluxes
-    u_wind_component = read_netcdf('u', current_date, latnrs, lonnrs)
-    v_wind_component = read_netcdf('v', current_date, latnrs, lonnrs)
+    u_wind_component = read_netcdf('u', current_date)
+    v_wind_component = read_netcdf('v', current_date)
     eastward_tcw_flux = u_wind_component * total_column_water
     northward_tcw_flux = v_wind_component * total_column_water
 
@@ -276,15 +280,15 @@ def get_two_layer_fluxes(water_flux, tcw_flux, boundary):
     return top_layer_flux, bottom_layer_flux
 
 
-def get_evaporation_precipitation(current_date, latnrs, lonnrs, gridcell_geometry):
+def get_evaporation_precipitation(current_date, gridcell_geometry):
     """ get evaporation and precipitation data from ERA Interim netCDF files,
     disaggregate the data into 3h accumulated values and transfer invalid
     (by sign convention) evaporation into precipitation """
 
     area, side_length, top_length, bottom_length = gridcell_geometry
 
-    evaporation = read_netcdf('e', current_date, latnrs, lonnrs)
-    precipitation = read_netcdf('tp', current_date, latnrs, lonnrs)
+    evaporation = read_netcdf('e', current_date)
+    precipitation = read_netcdf('tp', current_date)
 
     # TIP: ERA Interim's evaporation and precipitation are stored as values
     # accumulated in the ranges: 0h-3h, 0h-6h, 0h-9h, 0h-12h, and 12h-15h,
@@ -424,7 +428,7 @@ def balance_horizontal_fluxes(eastern, northern, water):
 
     eastern_boundary = np.zeros_like(eastern)
     eastern_boundary[:, :, :-1] = 0.5 * (eastern[:, :, :-1] + eastern[:, :, 1:])
-    if wam2layers_config.is_global:
+    if IS_GLOBAL:
         eastern_boundary[:, :, -1] = 0.5 * (eastern[:, :, -1] + eastern[:, :, 0])
 
     # separate directions west-east (all positive numbers)
@@ -519,17 +523,17 @@ def get_vertical_fluxes_new(evap, precip, w_top, w_bottom,
     return fa_vert
 
 
-def fluxes_and_storages(day, latnrs, lonnrs, gridcell_geometry, boundary,
+def fluxes_and_storages(day, gridcell_geometry, boundary,
                         divt, timestep):
     """ gets all done for a single day """
 
     # integrate specific humidity to get the (total) column water (vapor)
-    w_total, w_top, w_bottom = get_water(day, latnrs, lonnrs,
+    w_total, w_top, w_bottom = get_water(day,
                                          gridcell_geometry, boundary)
 
     # calculate horizontal moisture fluxes
     ewf, nwf, eastward_tcw, northward_tcw = \
-         get_horizontal_fluxes(w_total, day, latnrs, lonnrs)
+         get_horizontal_fluxes(w_total, day)
 
     east_top, east_bottom = \
         get_two_layer_fluxes(ewf, eastward_tcw, boundary)
@@ -539,7 +543,7 @@ def fluxes_and_storages(day, latnrs, lonnrs, gridcell_geometry, boundary,
 
     # evaporation and precipitation
     evaporation, precipitation = \
-        get_evaporation_precipitation(day, latnrs, lonnrs, gridcell_geometry)
+        get_evaporation_precipitation(day, gridcell_geometry)
 
     # put data on a smaller time step
     east_top, north_top, east_bottom, north_bottom = \
@@ -573,8 +577,10 @@ def fluxes_and_storages(day, latnrs, lonnrs, gridcell_geometry, boundary,
             evaporation, precipitation, w_top, w_bottom)
 
 
-def get_gridcell_geometry(latnrs):
+def get_gridcell_geometry():
     """ calculates grid cell area and dimensions """
+    # FIXME; these 3 lines should be a get_lat_lon() function
+    latnrs, lonnrs = get_latnrs_lonnrs()
     with netCDF4.MFDataset("%s/*.sp.nc" % wam2layers_config.data_dir) as dataset:
         latitude = dataset.variables['latitude'][latnrs]
 
@@ -660,3 +666,25 @@ def land_sea_mask():
         np.save(filename, np.packbits(mask))
 
     return xgrd, ygrd, mask.reshape(xgrd.shape)
+
+
+def get_latnrs_lonnrs():
+    """ provides indices to slicing the lat and lon dimensions """
+    # FIXME: we should have a single function returning lat and lon
+    with netCDF4.MFDataset("%s/*.sp.nc" % wam2layers_config.data_dir) as dataset:
+        latitude = dataset.variables['latitude'][:]
+        longitude = dataset.variables['longitude'][:]
+
+    weast, east, north, south = wam2layers_config.region
+
+    west_idx, east_idx = np.searchsorted(longitude, wrap_lon360([weast, east]))
+#    print "lonnrs = %d:%d" % (west_idx, east_idx)
+#    print "longitude[%d:%d] = %s" % (west_idx, east_idx,
+#                                     wrap_lon180(longitude[west_idx: east_idx]))
+
+    north_idx, south_idx = latitude.size - np.searchsorted(latitude[::-1], [north, south])
+#    print "latnrs = %d:%d" % (north_idx, south_idx)
+#    print "latitude[%d:%d] = %s" % (north_idx, south_idx,
+#                                    latitude[north_idx: south_idx])
+
+    return range(north_idx, south_idx + 1), range(west_idx, east_idx + 1)

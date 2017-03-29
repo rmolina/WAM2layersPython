@@ -14,7 +14,7 @@ import numpy as np
 import wam2layers
 
 
-def main(years, latnrs, lonnrs, boundary=8, divt=24, timestep=6*3600):
+def main(years, boundary=8, divt=24, timestep=6*3600):
     """ Reimplements the Fluxes_and_States_Masterscript.py functionality from
     https://github.com/ruudvdent/WAM2layersPython """
 
@@ -26,7 +26,7 @@ def main(years, latnrs, lonnrs, boundary=8, divt=24, timestep=6*3600):
     wam2layers.download_era_interim_data(years[-1] + 1, just_one_day=True)
 
     main_start = timer()
-    geometry = wam2layers.get_gridcell_geometry(latnrs)
+    geometry = wam2layers.get_gridcell_geometry()
 
     for year in years:
 
@@ -40,8 +40,7 @@ def main(years, latnrs, lonnrs, boundary=8, divt=24, timestep=6*3600):
 
             (east_top, north_top, east_bottom, north_bottom, vertical_flux,
              evaporation, precipitation, water_top, water_bottom) = \
-             wam2layers.fluxes_and_storages(day_as_dt, latnrs, lonnrs, geometry,
-                                            boundary, divt, timestep)
+             wam2layers.fluxes_and_storages(day_as_dt, geometry, boundary, divt, timestep)
 
             scipy.io.savemat('interdata/%s-%sfluxes_storages.mat' % (year, day),
                              {'Fa_E_top': east_top,
@@ -62,8 +61,6 @@ def main(years, latnrs, lonnrs, boundary=8, divt=24, timestep=6*3600):
 
 
 main(years=np.arange(2010, 2011),
-     latnrs=np.arange(7, 114),
-     lonnrs=np.arange(0, 240),
      boundary=8)
 
 
